@@ -7,6 +7,7 @@ package com.holdenkarau.predict.pr.comments.sparkProject.dataprep
 import org.apache.spark._
 import org.apache.spark.rdd._
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.functions._
 
@@ -62,13 +63,15 @@ class DataFetch(sc: SparkContext) {
     resultData.write.format("parquet").mode(SaveMode.Append).save(output)
   }
 
+  val schema = ScalaReflection.schemaFor[CommentInputData].dataType.asInstanceOf[StructType]
+
   def createJSONReader() = {
     session.read.format("json")
-      .option("inferSchema", "true")
+      .schema(schema)
   }
 
   def createReader() = {
-    session.read.format("parquet")
+    session.read.format("parquet").schema(schema)
   }
 
   def loadInput(input: String) = {
@@ -89,24 +92,48 @@ class DataFetch(sc: SparkContext) {
       List("pull_request_url"))
       .filter(!($"pull_request_url" === "null"))
 
-    // Strip out the start end "s
-    val processPathsUDF = udf(DataFetch.processPaths _)
+    // Strip out the start end "s because we get nested "s from BQ GH dumps
+    val processBQStringUDF = udf(DataFetch.processBQString _)
+
+    // Take the either types and convert them to ints
+    // The JSON dumps from BQ have the comment pos as strings even when cast to ints
+    val cleanRawCommentPositionsUDF = udf(DataFetch.cleanRawCommentPositions _)
+
 
     val cleanedInputData = filteredInput.select(
       filteredInput("pull_request_url"),
       filteredInput("pull_patch_url"),
-      filteredInput("comment_positions"),
+      cleanRawCommentPositionsUDF(filteredInput("comment_positions")).alias("comment_positions"),
       // We probably need a UDF here to extract the diff_hunks
       filteredInput("diff_hunks"),
-      processPathsUDF(filteredInput("comment_file_path")).alias("comment_file_paths"),
-      filteredInput("comment_commit_ids")).as[ParsedCommentInputData]
+      filteredInput("comment_text"),
+      processBQStringUDF(filteredInput("comment_file_paths")).alias("comment_file_paths"),
+      processBQStringUDF(filteredInput("comment_commit_ids")).alias("comment_commit_ids")
+    ).as[ParsedCommentInputData]
     cleanedInputData
   }
 
 }
 
 object DataFetch {
-  def processPaths(input: Seq[String]): Seq[String] = {
+  def processBQString(input: Seq[String]): Seq[String] = {
     input.map(_.replaceAll("^\"|\"$", ""))
+  }
+
+  def cleanRawCommentPositions(input: Seq[Map[String, String]]): Seq[CommentPosition] = {
+    def strOptToInt(elem: Option[String]): Option[Int] = {
+      elem.flatMap{concreteElem =>
+        try {
+          Some(concreteElem.toInt)
+        } catch {
+          case e: Exception => None
+        }
+      }
+    }
+    input.map {pos =>
+      CommentPosition(
+        strOptToInt(pos.get("original_position")),
+        strOptToInt(pos.get("new_position")))
+    }
   }
 }

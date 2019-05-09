@@ -57,8 +57,16 @@ class IssueDataFetch(sc: SparkContext) {
     createReader().load(input).repartition(inputParallelism)
   }
 
+  def createCSVReader() = {
+    session.read.format("csv")
+      .option("header", "true")
+      .option("inferSchema", "true")
+      .option("quote", "\"")
+      .option("escape", "\"")
+  }
+
   def loadInput(input: Dataset[String]) = {
-    createReader.csv(input)
+    createCSVReader.csv(input)
   }
 }
 
