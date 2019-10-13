@@ -26,8 +26,21 @@ class TrainingPipeline(sc: SparkContext) {
 
   val featurizer = new Featurizer(sc)
 
+    def dumpTFXData(input: String, issueInput: String, output: String, dataprepPipelineLocation: String) = {
+      val schema = ScalaReflection.schemaFor[ResultCommentData].dataType.asInstanceOf[StructType]
+      val issueSchema = ScalaReflection.schemaFor[IssueStackTrace].dataType.asInstanceOf[StructType]
+      val inputParallelism = sc.getConf.get("spark.default.parallelism", "100").toInt
+
+      val partitionedInputs = inputData.repartition(inputParallelism)
+      val inputData = session.read.format("parquet").schema(schema).load(input).as[ResultCommentData]
+      val issueInputData = session.read.format("parquet").schema(issueSchema).load(issueInput).as[IssueStackTrace]
+
+      val tfxData = featurizer.prepareTFXData(partitionedInput, issueInputData, true)
+      tfxData.save.format("csv").wriote(output)
+    }
+
+
   def trainAndSaveModel(input: String, issueInput: String, output: String, dataprepPipelineLocation: String) = {
-    // TODO: Do this
     val schema = ScalaReflection.schemaFor[ResultCommentData].dataType.asInstanceOf[StructType]
     val issueSchema = ScalaReflection.schemaFor[IssueStackTrace].dataType.asInstanceOf[StructType]
 

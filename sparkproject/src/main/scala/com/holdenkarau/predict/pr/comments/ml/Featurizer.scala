@@ -40,10 +40,31 @@ case class PreparedData(
   commit_id: Option[String]=None,
   offset: Option[Int]=None)
 
+case class TFXOutputData(
+  add: Boolean,
+  lineText: String,
+  previousLinesFlat: String,
+  nextLinesFlat: String,
+  commented: Boolean,
+  label: Double)
 
 class Featurizer(sc: SparkContext) {
   val session = SparkSession.builder().getOrCreate()
   import session.implicits._
+
+  // Produce data for TFX
+  def prepareTFXData(input: Dataset[ResultCommentData],
+    issues: Dataset[IssueStackTrace], pyOnly: Boolean = true): Dataset[TFXOutputData] = {
+    val prepared = prepareTrainingData(input, issues, pyOnly)
+    val flatened = (
+      prepared
+        .withColumn("previousLinesFlat", concat_ws("\n", $"previousLines"))
+        .withColumn("nextLinesFlat", concat_ws("\n", $"nextLines"))
+    )
+    flatened.select(
+      $"add", $"lineText", $"previousLinesFlat", $"nextLinesFlat", $"commented", $"label").
+      as[TFXOutputData]
+  }
 
   // Produce data for training
   def prepareTrainingData(input: Dataset[ResultCommentData],
@@ -116,7 +137,7 @@ object Featurizer {
         .flatZip(parsed_input.diff_hunks)
         .flatZip(parsed_input.comment_file_paths)
         .flatZip(parsed_input.comment_text))
-      println(s"Preparing to extract on ${patchLinesWithComments.toSeq}") 
+      println(s"Preparing to extract on ${patchLinesWithComments.toSeq}")
       patchLinesWithComments.flatMap{
         case (patchRecords, diff_hunk, commentFilename, comment_text) =>
           patchRecords
@@ -225,4 +246,3 @@ object Featurizer {
     }
   }
 }
-
